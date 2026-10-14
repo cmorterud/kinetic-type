@@ -21,7 +21,6 @@
   let viewportHeight = 0;
   let boundaries = [];
   let previousFrame = 0;
-  let accumulatedTime = 0;
 
   function resizeCanvas() {
     viewportWidth = window.innerWidth;
@@ -129,7 +128,7 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     for (const body of Composite.allBodies(world)) {
-      if (!body.isStatic && body.position.y > viewportHeight + 1000) {
+      if (body.position.y > viewportHeight + 1000) {
         Composite.remove(world, body);
         continue;
       }
@@ -144,15 +143,9 @@
   }
 
   function frame(timestamp) {
-    if (previousFrame === 0) previousFrame = timestamp;
-    accumulatedTime += Math.min(timestamp - previousFrame, 100);
+    const elapsed = previousFrame === 0 ? STEP_MS : timestamp - previousFrame;
     previousFrame = timestamp;
-
-    while (accumulatedTime >= STEP_MS) {
-      Engine.update(engine, STEP_MS);
-      accumulatedTime -= STEP_MS;
-    }
-
+    Engine.update(engine, Math.min(Math.max(elapsed, 1), 50));
     render();
     requestAnimationFrame(frame);
   }
