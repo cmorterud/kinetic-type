@@ -12,10 +12,10 @@
   const CELL_HEIGHT = 14;
   const CORE_WIDTH = 80;
   const CORE_HEIGHT = 20;
-  const BLAST_RADIUS = 200;
+  const BLAST_RADIUS = 240;
   const BLAST_MAGNITUDE = 0.05;
   const BLAST_COOLDOWN = 1500;
-  const ENEMY_FORCE = 0.0005;
+  const ENEMY_FORCE = 0.00008;
   const BOUNDARY_THICKNESS = 100;
   const STEP_MS = 1000 / 60;
   const glyphs = "#@T%+*:=?";
@@ -26,7 +26,7 @@
   let boundaries = [];
   let core = null;
   let coreHealth = 100;
-  let gameOver = false;
+  let phase = "ready";
   let gameStartTime = 0;
   let survivedMs = 0;
   let lastBlastTime = 0;
@@ -158,12 +158,13 @@
   }
 
   function spawnWave() {
-    if (gameOver) return;
-    const count = 1 + Math.floor(Math.random() * 3);
+    if (phase !== "playing") return;
+    const survivedSeconds = (performance.now() - gameStartTime) / 1000;
+    const maxEnemies = survivedSeconds < 15 ? 1 : survivedSeconds < 40 ? 2 : 3;
+    const count = 1 + Math.floor(Math.random() * maxEnemies);
     for (let i = 0; i < count; i += 1) spawnEnemy();
 
-    const survivedSeconds = (performance.now() - gameStartTime) / 1000;
-    const nextDelay = Math.max(550, 1500 - survivedSeconds * 12);
+    const nextDelay = Math.max(800, 1500 - survivedSeconds * 10);
     spawnTimer = setTimeout(spawnWave, nextDelay);
   }
 
@@ -204,10 +205,26 @@
   }
 
   function endGame() {
-    if (gameOver) return;
-    gameOver = true;
+    if (phase !== "playing") return;
+    phase = "gameOver";
     survivedMs = performance.now() - gameStartTime;
     clearTimeout(spawnTimer);
+  }
+
+  function startGame() {
+    clearTimeout(spawnTimer);
+    for (const body of Composite.allBodies(world)) {
+      if (body.char) Composite.remove(world, body);
+    }
+    spawnBarricade();
+    coreHealth = 100;
+    survivedMs = 0;
+    gameStartTime = performance.now();
+    lastBlastTime = gameStartTime - BLAST_COOLDOWN;
+    previousFrame = 0;
+    phase = "playing";
+    spawnTimer = setTimeout(spawnWave, 3000);
+    requestAnimationFrame(frame);
   }
 
   Events.on(engine, "collisionStart", (event) => {
@@ -226,7 +243,7 @@
   });
 
   function drawHud(now) {
-    const elapsed = gameOver ? survivedMs : now - gameStartTime;
+    const elapsed = phase === "gameOver" ? survivedMs : now - gameStartTime;
     const cooldownProgress = Math.min(1, (now - lastBlastTime) / BLAST_COOLDOWN);
     const filled = Math.floor(cooldownProgress * 10);
 
@@ -235,13 +252,20 @@
     ctx.textBaseline = "middle";
     ctx.textAlign = "right";
     ctx.fillStyle = "#FFFFFF";
-    ctx.fillText(`SURVIVED: ${(elapsed / 1000).toFixed(1)}s`, viewportWidth - 16, 24);
+    ctx.fillText(`SURVIVED: ${phase === "ready" ? "0.0" : (elapsed / 1000).toFixed(1)}s`, viewportWidth - 16, 24);
 
     ctx.textAlign = "center";
     ctx.fillStyle = coreHealth <= 30 ? "#FF0033" : "#00FFFF";
     ctx.fillText(`INTEGRITY: ${coreHealth}%`, core.position.x, core.position.y - 36);
 
-    ctx.fillStyle = cooldownProgress >= 1 ? "#00FF41" : "#FFFFFF";
+    const blastReady = phase === "ready" || cooldownProgress >= 1;
+    ctx.fillStyle = blastReady ? "#00FF41" : "#FFFFFF";
+    ctx.fillText(
+      blastReady ? "BLAST READY — CLICK NEAR RED ENEMIES" : `RECHARGING: ${((1 - cooldownProgress) * BLAST_COOLDOWN / 1000).toFixed(1)}s`,
+      viewportWidth / 2,
+      viewportHeight - 50,
+      viewportWidth - 24
+    );
     ctx.fillText(
       `BLAST: [${"|".repeat(filled)}${" ".repeat(10 - filled)}]`,
       viewportWidth / 2,
@@ -249,17 +273,34 @@
     );
     ctx.restore();
 
-    if (gameOver) {
+    if (phase === "ready" || phase === "gameOver") {
       ctx.save();
-      ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
       ctx.fillRect(0, 0, viewportWidth, viewportHeight);
-      ctx.fillStyle = "#FF0033";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.font = `bold ${Math.min(48, Math.max(22, viewportWidth / 15))}px monospace`;
-      ctx.fillText("SYSTEM FAILURE", viewportWidth / 2, viewportHeight / 2);
+      ctx.fillStyle = phase === "ready" ? "#00FFFF" : "#FF0033";
+      ctx.fillText(phase === "ready" ? "DEFEND THE CORE" : "SYSTEM FAILURE", viewportWidth / 2, viewportHeight / 2 - 72, viewportWidth - 24);
       ctx.font = "14px 'Courier New', monospace";
-      ctx.fillText(`SURVIVED: ${(survivedMs / 1000).toFixed(1)}s`, viewportWidth / 2, viewportHeight / 2 + 44);
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillText(
+        phase === "ready" ? "RED LETTERS DAMAGE THE CYAN CORE" : `SURVIVED: ${(survivedMs / 1000).toFixed(1)}s`,
+        viewportWidth / 2,
+        viewportHeight / 2 - 18,
+        viewportWidth - 24
+      );
+      if (phase === "ready") {
+        ctx.fillText("CLICK NEAR RED LETTERS TO BLAST THEM AWAY", viewportWidth / 2, viewportHeight / 2 + 10, viewportWidth - 24);
+        ctx.fillText("BLAST RECHARGES EVERY 1.5 SECONDS", viewportWidth / 2, viewportHeight / 2 + 38, viewportWidth - 24);
+      }
+      ctx.fillStyle = "#00FF41";
+      ctx.fillText(
+        phase === "ready" ? "CLICK OR PRESS SPACE TO START" : "CLICK OR PRESS SPACE TO RETRY",
+        viewportWidth / 2,
+        viewportHeight / 2 + 80,
+        viewportWidth - 24
+      );
       ctx.restore();
     }
   }
@@ -286,25 +327,34 @@
   }
 
   function frame(timestamp) {
+    if (phase !== "playing") return;
     const elapsed = previousFrame === 0 ? STEP_MS : timestamp - previousFrame;
     previousFrame = timestamp;
     steerEnemies();
     Engine.update(engine, Math.min(Math.max(elapsed, 1), 50));
     render(timestamp);
-    if (!gameOver) requestAnimationFrame(frame);
+    if (phase === "playing") requestAnimationFrame(frame);
   }
 
-  canvas.addEventListener("mousedown", (event) => {
-    if (gameOver) return;
+  canvas.addEventListener("pointerdown", (event) => {
+    if (phase !== "playing") {
+      startGame();
+      return;
+    }
     const now = performance.now();
     if (now - lastBlastTime < BLAST_COOLDOWN) return;
     lastBlastTime = now;
     const bounds = canvas.getBoundingClientRect();
     explodeAt(event.clientX - bounds.left, event.clientY - bounds.top);
   });
+  window.addEventListener("keydown", (event) => {
+    if (event.code !== "Space" || event.repeat) return;
+    event.preventDefault();
+    if (phase !== "playing") startGame();
+  });
   window.addEventListener("resize", () => {
     resizeCanvas();
-    if (gameOver) render(performance.now());
+    if (phase !== "playing") render(performance.now());
   });
 
   resizeCanvas();
@@ -313,8 +363,5 @@
   });
   Composite.add(world, core);
   spawnBarricade();
-  gameStartTime = performance.now();
-  lastBlastTime = gameStartTime - BLAST_COOLDOWN;
-  spawnTimer = setTimeout(spawnWave, 1500);
-  requestAnimationFrame(frame);
+  render(performance.now());
 })();
