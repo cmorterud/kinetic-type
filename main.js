@@ -14,8 +14,10 @@
   const CORE_HEIGHT = 20;
   const BLAST_RADIUS = 240;
   const BLAST_MAGNITUDE = 0.05;
+  const SHIELD_BLAST_MAGNITUDE = 0.015;
   const BLAST_COOLDOWN = 1500;
   const ENEMY_FORCE = 0.00008;
+  const SHIELD_RECALL_DELAY = 1200;
   const BOUNDARY_THICKNESS = 100;
   const STEP_MS = 1000 / 60;
   const glyphs = "#@T%+*:=?";
@@ -117,6 +119,8 @@
         frictionAir: 0.03,
       });
       body.char = glyphs[(glyphIndex * 7) % glyphs.length];
+      body.home = { x: x - centerX, y: y - centerY };
+      body.recallAt = 0;
       glyphIndex += 1;
       letters.push(body);
     }
@@ -182,6 +186,40 @@
     }
   }
 
+  function recallShield(now) {
+    for (const body of Composite.allBodies(world)) {
+      if (!body.home) continue;
+
+      const targetX = core.position.x + body.home.x;
+      const targetY = core.position.y + body.home.y;
+      const dx = targetX - body.position.x;
+      const dy = targetY - body.position.y;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance > 18 && body.recallAt === 0) {
+        body.recallAt = now + SHIELD_RECALL_DELAY;
+      }
+      if (body.recallAt === 0 || now < body.recallAt) continue;
+
+      if (distance < 4) {
+        Body.setPosition(body, { x: targetX, y: targetY });
+        Body.setVelocity(body, { x: 0, y: 0 });
+        Body.setAngle(body, 0);
+        Body.setAngularVelocity(body, 0);
+        body.recallAt = 0;
+        continue;
+      }
+
+      const speed = Math.min(2.5, distance * 0.035);
+      Body.setVelocity(body, {
+        x: body.velocity.x * 0.85 + (dx / distance) * speed * 0.15,
+        y: body.velocity.y * 0.85 + (dy / distance) * speed * 0.15,
+      });
+      Body.setAngularVelocity(body, body.angularVelocity * 0.85);
+      Body.setAngle(body, body.angle * 0.9);
+    }
+  }
+
   function explodeAt(x, y) {
     for (const body of Composite.allBodies(world)) {
       if (!body.char) continue;
@@ -194,7 +232,9 @@
       // A click exactly on a body's center still needs a valid direction.
       const directionX = distance > 0 ? dx / distance : 0;
       const directionY = distance > 0 ? dy / distance : -1;
-      const force = BLAST_MAGNITUDE * (1 - distance / BLAST_RADIUS);
+      const magnitude = body.isEnemy ? BLAST_MAGNITUDE : SHIELD_BLAST_MAGNITUDE;
+      const force = magnitude * (1 - distance / BLAST_RADIUS);
+      if (body.home) body.recallAt = performance.now() + SHIELD_RECALL_DELAY;
       if (body.isStatic) Body.setStatic(body, false);
       Body.applyForce(
         body,
@@ -293,12 +333,13 @@
       if (phase === "ready") {
         ctx.fillText("CLICK NEAR RED LETTERS TO BLAST THEM AWAY", viewportWidth / 2, viewportHeight / 2 + 10, viewportWidth - 24);
         ctx.fillText("BLAST RECHARGES EVERY 1.5 SECONDS", viewportWidth / 2, viewportHeight / 2 + 38, viewportWidth - 24);
+        ctx.fillText("GREEN LETTERS RETURN TO THE CORE", viewportWidth / 2, viewportHeight / 2 + 66, viewportWidth - 24);
       }
       ctx.fillStyle = "#00FF41";
       ctx.fillText(
         phase === "ready" ? "CLICK OR PRESS SPACE TO START" : "CLICK OR PRESS SPACE TO RETRY",
         viewportWidth / 2,
-        viewportHeight / 2 + 80,
+        viewportHeight / 2 + (phase === "ready" ? 108 : 80),
         viewportWidth - 24
       );
       ctx.restore();
@@ -331,6 +372,7 @@
     const elapsed = previousFrame === 0 ? STEP_MS : timestamp - previousFrame;
     previousFrame = timestamp;
     steerEnemies();
+    recallShield(timestamp);
     Engine.update(engine, Math.min(Math.max(elapsed, 1), 50));
     render(timestamp);
     if (phase === "playing") requestAnimationFrame(frame);
